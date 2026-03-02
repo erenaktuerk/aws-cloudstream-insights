@@ -1,0 +1,5 @@
+# These dependencies are used inside AWS managed services
+# Do NOT install locally
+
+pyspark
+apache-flink

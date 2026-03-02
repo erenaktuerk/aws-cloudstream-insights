@@ -1,0 +1,1 @@
+All data is encrypted at rest using AWS KMS and in transit via TLS.

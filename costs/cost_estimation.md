@@ -1,0 +1,1 @@
+Estimated monthly cost based on minimal dev usage.

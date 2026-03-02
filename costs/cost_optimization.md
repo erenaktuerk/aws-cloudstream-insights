@@ -1,0 +1,1 @@
+Cost optimization strategies: lifecycle policies, pause/resume, scaling.

@@ -1,0 +1,1 @@
+Defines IAM roles for Glue and Flink following least privilege.
