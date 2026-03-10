@@ -1,5 +1,15 @@
 # These dependencies are used inside AWS managed services
 # Do NOT install locally
 
-pyspark
-apache-flink
+# AWS SDK
+boto3>=1.28.0
+
+# Data processing
+pandas>=2.0.0
+pyarrow>=12.0.0
+
+# Date handling
+python-dateutil>=2.8.2
+
+# Optional: AWS Glue compatibility
+awswrangler>=3.4.0

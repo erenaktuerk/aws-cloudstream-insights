@@ -1,32 +1,31 @@
 # cloudstream-insights  
 *Cloud-native Batch & Streaming Analytics Platform*
 
+---
+
 ## Executive Summary
 
-cloudstream-insights is a cloud-native data platform designed to process and analyze both batch and real-time event data on AWS.
+*cloudstream-insights* is a cloud-native data platform built to process and analyze both *batch* and *real-time event data* on AWS.  
 
-The project demonstrates how to build a scalable, cost-efficient and secure analytics architecture using managed AWS services.  
-It combines traditional batch ETL pipelines with real-time streaming analytics to deliver near-real-time insights from event-driven data sources.
+It demonstrates how to construct a *scalable, cost-efficient, and secure analytics architecture* using managed AWS services. The project combines *traditional batch ETL pipelines* with *real-time streaming analytics*, delivering near-real-time insights from event-driven data sources.
 
-The architecture and implementation follow best practices commonly used in IT consulting and data engineering projects, including Infrastructure as Code, clear separation of data zones, cost control mechanisms, and security-by-design.
+The architecture and implementation follow *consulting-grade best practices: Infrastructure as Code (IaC), clear separation of **data zones, cost control, and **security-by-design*.
 
 ---
 
 ## Architecture Overview
 
-The platform is built on AWS and consists of the following core components:
+The platform leverages AWS managed services to separate storage, compute, and analytics layers:
 
-- *Amazon S3* as the central data lake (Raw, Curated, Analytics zones)
-- *AWS Glue* for batch ETL processing and data quality checks
-- *Amazon Kinesis Data Streams* for ingesting streaming event data
-- *Apache Flink (Kinesis Data Analytics)* for stateful real-time stream processing
-- *Amazon Athena* for ad-hoc, cost-efficient analytics
-- *Amazon Redshift* for performant BI and dashboard workloads
-- *Terraform* for Infrastructure as Code (IaC)
-- *Amazon CloudWatch* for monitoring and alerting
-- *IAM & KMS* for security and encryption
-
-The platform cleanly separates storage, compute, and analytics layers to enable independent scaling and cost optimization.
+| Layer | Components | Purpose |
+|-------|------------|---------|
+| Storage | Amazon S3 (Raw / Curated / Analytics) | Central data lake and partitioned storage |
+| Batch ETL | AWS Glue | Data ingestion, cleansing, schema enforcement, and quality checks |
+| Streaming ETL | Amazon Kinesis Data Streams + Apache Flink | Stateful streaming, deduplication, windowed aggregations |
+| Analytics | Amazon Athena & Redshift | Ad-hoc queries and high-performance BI |
+| Infrastructure | Terraform | IaC for reproducibility and versioning |
+| Monitoring | CloudWatch | ETL monitoring, streaming delays, and alerting |
+| Security | IAM & KMS | Least privilege access, encryption at rest and in transit |
 
 ---
 
@@ -34,117 +33,88 @@ The platform cleanly separates storage, compute, and analytics layers to enable 
 
 ### Batch Processing Flow
 
-1. Batch data (CSV / JSON / Parquet) is ingested into *S3 Raw Zone*
+1. Upload batch data (CSV / JSON / Parquet) to *S3 Raw Zone*  
 2. *AWS Glue Jobs* perform:
-   - Data cleansing
-   - Schema enforcement
-   - Data quality checks
-3. Processed data is written to *S3 Curated Zone*
-4. Curated data is queried via:
-   - *Amazon Athena* for ad-hoc analysis
-   - *Amazon Redshift* for structured analytics and reporting
+   - Data cleansing & type enforcement  
+   - Schema validation  
+   - Data quality checks  
+3. Write processed datasets to *S3 Curated Zone*  
+4. Query curated data:
+   - *Amazon Athena* for ad-hoc analytics  
+   - *Amazon Redshift* for structured BI and dashboards  
 
-### Streaming Processing Flow
+#### Current Implementation (Python Batch ETL)
 
-1. Event data is ingested into *Amazon Kinesis Data Streams*
-2. *Apache Flink* consumes events and performs:
-   - Stateful aggregations
-   - Deduplication
-   - Window-based analytics
-3. Processed streaming data is written to:
-   - *S3 (Realtime Curated Zone)*
-   - *Amazon Redshift* for near-real-time dashboards
+- Implemented in etl/glue_jobs/batch_etl.py  
+- Features:
+  - Robust reading of *JSON Lines* and standard JSON  
+  - Automatic *column normalization* and timestamping  
+  - Basic *data quality checks* with warnings for missing data  
+  - Writes *partitioned Parquet* files to curated S3 zone  
 
----
+Example:
 
-## Key Design Decisions & Trade-offs
+```python
+df = pd.read_json(s3_object)
+df.columns = [col.lower().replace(" ", "_") for col in df.columns]
+df["processed_at"] = datetime.utcnow()
 
-### Apache Flink vs AWS Lambda
-- *Chosen:* Apache Flink  
-- *Reason:* Stateful processing, windowed aggregations, exactly-once semantics  
-- *Trade-off:* Higher conceptual complexity, but far more suitable for real streaming analytics
+Streaming Processing Flow
+	1.	Event data ingested into Amazon Kinesis Data Streams
+	2.	Apache Flink processes streams:
+	•	Stateful aggregations & deduplication
+	•	Window-based analytics
+	•	Exactly-once semantics for reliability
+	3.	Writes results to:
+	•	S3 (Realtime Curated Zone)
+	•	Amazon Redshift for near-real-time dashboards
 
-### Athena vs Redshift
-- *Athena:* Cost-efficient, serverless, ideal for exploratory analytics  
-- *Redshift:* Higher performance for BI dashboards and recurring queries  
-- *Decision:* Use both depending on workload characteristics
+⸻
 
-### Serverless vs Always-On Infrastructure
-- Preference for serverless services (Glue, Athena, managed Flink)
-- Redshift used selectively for performance-critical workloads
-- Enables better cost control and operational simplicity
+Key Design Decisions & Trade-offs
+	•	Apache Flink vs AWS Lambda: Flink for stateful streaming & exactly-once semantics
+	•	Athena vs Redshift: Athena for ad-hoc, Redshift for BI
+	•	Serverless vs Always-On: Serverless preferred for cost-efficiency; Redshift selectively
 
----
+⸻
 
-## Security & Compliance
+Security & Compliance
+	•	IAM roles with least privilege
+	•	KMS encryption at rest and TLS in transit
+	•	Centralized CloudWatch audit logging
+	•	Environment separation (dev / prod) via Terraform
 
-Security is implemented following least-privilege and defense-in-depth principles:
+⸻
 
-- IAM roles with minimal required permissions
-- Encryption at rest using AWS KMS
-- Encryption in transit using TLS
-- Centralized audit logging via CloudWatch and AWS logs
-- Environment separation (dev / prod) using Terraform
+Monitoring & Operations
+	•	CloudWatch dashboards for Glue, Kinesis, Flink
+	•	Alarms for:
+	•	Failed ETL jobs
+	•	Streaming delays
+	•	Cost thresholds
 
----
+⸻
 
-## Monitoring & Operations
+Cost Optimization Strategy
+	•	S3 lifecycle policies for infrequent access / archival
+	•	Athena query optimization (partitions & projection)
+	•	Dynamic Kinesis shard scaling
+	•	Redshift pause/resume in non-production environments
+	•	Monitoring-driven cost alerts
 
-The platform includes operational visibility through:
+⸻
 
-- CloudWatch dashboards for:
-  - Glue job execution metrics
-  - Kinesis throughput and lag
-  - Flink job health and latency
-- CloudWatch alarms for:
-  - Failed ETL jobs
-  - Streaming delays
-  - Cost threshold breaches
+Project Structure Overview
 
----
-
-## Cost Optimization Strategy
-
-Cost control is a core design principle:
-
-- S3 lifecycle policies for automatic data tiering
-- Athena query optimization and usage limits
-- Dynamic scaling of Kinesis shards
-- Redshift pause / resume strategy for non-production environments
-- Monitoring-based cost alerts
-
----
-
-## Project Structure Overview
-
-The repository is structured to reflect real-world data engineering projects:
-
-- infrastructure/ – Terraform code for all AWS resources
-- etl/ – Glue batch ETL and data quality jobs
-- streaming/ – Apache Flink streaming jobs
-- analytics/ – Athena queries and Redshift models
-- monitoring/ – Dashboards and alerting configuration
-- security/ – IAM and encryption documentation
-- costs/ – Cost estimation and optimization strategies
-
----
-
-## Industry Adaptability
-
-The platform is intentionally designed to be industry-agnostic.  
-Only the business narrative changes, not the architecture or code.
-
-Examples:
-- Finance: Transaction and risk events
-- Retail: Orders and clickstream data
-- Telco: Network and usage events
-- Industry / IoT: Sensor and machine events
-- Public Sector: Administrative event data
-
----
-
-## Key Takeaway
-
-This project demonstrates a consulting-grade cloud data platform that unifies batch and streaming analytics, applies Infrastructure as Code, and balances performance, cost, and operational excellence.
-
-It is intended as a portfolio project showcasing a cloud data engineering mindset rather than a production-ready system. In
+cloudstream-insights/
+├─ infrastructure/  # Terraform for AWS resources
+├─ etl/             # Batch ETL & data quality jobs
+│  └─ glue_jobs/
+│     └─ batch_etl.py
+├─ streaming/       # Flink streaming jobs
+├─ analytics/       # Athena queries & Redshift models
+├─ monitoring/      # Dashboards & alerting
+├─ security/        # IAM & encryption docs
+├─ costs/           # Cost optimization notes
+├─ src/             # Helper scripts (e.g., upload_to_s3.py)
+└─ data/            # Sample event files

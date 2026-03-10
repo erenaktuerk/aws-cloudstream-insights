@@ -5,6 +5,7 @@ import pyarrow as pa
 import logging
 from io import BytesIO
 from datetime import datetime
+import json
 
 # --------------------------
 # Logging configuration
@@ -19,6 +20,7 @@ logging.basicConfig(
 # --------------------------
 RAW_BUCKET = "cloudstream-insights-396421249599"
 CURATED_BUCKET = "cloudstream-insights-396421249599"
+
 RAW_PREFIX = "raw/"
 CURATED_PREFIX = "curated/"
 
@@ -30,20 +32,79 @@ s3_client = boto3.client("s3")
 # --------------------------
 # Helper functions
 # --------------------------
+def list_s3_files(bucket: str, prefix: str) -> list[str]:
+    """
+    List all files inside a specific S3 prefix.
+    """
+    logging.info(f"Listing files in s3://{bucket}/{prefix}")
+
+    paginator = s3_client.get_paginator("list_objects_v2")
+    keys = []
+
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            keys.append(obj["Key"])
+
+    logging.info(f"Found {len(keys)} files")
+    return keys
+
+
 def read_json_from_s3(bucket: str, key: str) -> pd.DataFrame:
     """
-    Read a JSON file from S3 and return a Pandas DataFrame.
+    Robust JSON reader for S3.
+
+    Supports:
+    - JSON Lines
+    - Standard JSON Arrays ([{}, {}, ...])
+    - Single JSON objects ({...})
+    - Lists of scalars ([1, 2, 3])
     """
     logging.info(f"Reading raw data from s3://{bucket}/{key}")
+
     obj = s3_client.get_object(Bucket=bucket, Key=key)
-    df = pd.read_json(obj['Body'], lines=True)
+    content = obj["Body"].read().decode("utf-8").strip()
+
+    if not content:
+        logging.warning(f"{key} is empty. Skipping file.")
+        return pd.DataFrame()
+
+    # Try JSON Lines
+    try:
+        df = pd.read_json(BytesIO(content.encode()), lines=True)
+    except ValueError:
+        logging.warning(f"{key} is not JSON Lines. Trying standard JSON format.")
+        try:
+            df = pd.read_json(BytesIO(content.encode()))
+        except ValueError:
+            # Handle arrays of scalars or single objects
+            try:
+                parsed = json.loads(content)
+                if isinstance(parsed, list):
+                    if all(isinstance(x, dict) for x in parsed):
+                        df = pd.DataFrame(parsed)
+                    else:
+                        df = pd.DataFrame({"value": parsed})
+                elif isinstance(parsed, dict):
+                    df = pd.DataFrame([parsed])
+                else:
+                    logging.error(f"Unsupported JSON format in {key}: {parsed}")
+                    return pd.DataFrame()
+            except Exception as e:
+                logging.error(f"Failed to parse {key}: {e}")
+                return pd.DataFrame()
+
     logging.info(f"Read {len(df)} rows")
     return df
 
+
 def write_parquet_to_s3(df: pd.DataFrame, bucket: str, key: str):
     """
-    Write a Pandas DataFrame to S3 as a Parquet file.
+    Write DataFrame as Parquet file to S3.
     """
+    if df.empty:
+        logging.warning("DataFrame empty. Skipping Parquet write.")
+        return
+
     logging.info(f"Writing curated data to s3://{bucket}/{key}")
     buffer = BytesIO()
     table = pa.Table.from_pandas(df)
@@ -52,50 +113,80 @@ def write_parquet_to_s3(df: pd.DataFrame, bucket: str, key: str):
     s3_client.put_object(Bucket=bucket, Key=key, Body=buffer.getvalue())
     logging.info("Write successful")
 
+
 def perform_data_quality_checks(df: pd.DataFrame):
     """
-    Perform simple data quality checks.
+    Basic data quality checks.
     """
     logging.info("Performing data quality checks")
+
     if df.empty:
-        logging.warning("DataFrame is empty!")
-    if df.isnull().sum().sum() > 0:
-        logging.warning("Data contains missing values")
+        logging.warning("DataFrame is empty")
+
+    missing_values = df.isnull().sum().sum()
+    if missing_values > 0:
+        logging.warning(f"Data contains {missing_values} missing values")
+
     logging.info("Data quality checks completed")
+
 
 # --------------------------
 # Main ETL workflow
 # --------------------------
 def main():
     """
-    Main ETL workflow:
-    1. Read raw data from S3
-    2. Clean & transform
-    3. Write curated data to S3
+    Main ETL pipeline.
+
+    Steps:
+    1. List all raw files
+    2. Read JSON
+    3. Transform data
+    4. Run quality checks
+    5. Write partitioned Parquet to curated zone
     """
-    # Example: process a single file
-    raw_key = RAW_PREFIX + "20260302_152758_sample_event.json"
-    df = read_json_from_s3(RAW_BUCKET, raw_key)
+    raw_files = list_s3_files(RAW_BUCKET, RAW_PREFIX)
 
-    # --------------------------
-    # Transformation example
-    # --------------------------
-    logging.info("Starting transformation")
-    # Example: flatten nested JSON or rename columns
-    df.columns = [col.lower().replace(" ", "_") for col in df.columns]
-    df['processed_at'] = datetime.utcnow()
-    logging.info("Transformation completed")
+    if not raw_files:
+        logging.warning("No files found in raw zone")
+        return
 
-    # --------------------------
-    # Data quality
-    # --------------------------
-    perform_data_quality_checks(df)
+    for raw_key in raw_files:
 
-    # --------------------------
-    # Write curated data
-    # --------------------------
-    curated_key = CURATED_PREFIX + "20260302_152758_sample_event.parquet"
-    write_parquet_to_s3(df, CURATED_BUCKET, curated_key)
+        if raw_key.endswith("/"):
+            continue
+
+        try:
+            df = read_json_from_s3(RAW_BUCKET, raw_key)
+
+            if df.empty:
+                logging.warning(f"Skipping {raw_key} due to empty dataset")
+                continue
+
+            # --------------------------
+            # Transformation
+            # --------------------------
+            logging.info("Starting transformation")
+            df.columns = [col.lower().replace(" ", "_") for col in df.columns]
+            df["processed_at"] = datetime.utcnow()
+            logging.info("Transformation completed")
+
+            # --------------------------
+            # Data quality
+            # --------------------------
+            perform_data_quality_checks(df)
+
+            # --------------------------
+            # Partitioned write
+            # --------------------------
+            date_str = datetime.utcnow().strftime("%Y/%m/%d")
+            file_name = raw_key.split("/")[-1].replace(".json", ".parquet")
+            curated_key = f"{CURATED_PREFIX}{date_str}/{file_name}"
+            write_parquet_to_s3(df, CURATED_BUCKET, curated_key)
+
+        except Exception as e:
+            logging.error(f"Pipeline failed for {raw_key}: {e}")
+            continue
+
 
 if __name__ == "__main__":
     main()
