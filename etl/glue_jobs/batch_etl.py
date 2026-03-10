@@ -20,15 +20,17 @@ logging.basicConfig(
 # --------------------------
 # S3 Configuration
 # --------------------------
-RAW_BUCKET = "cloudstream-insights-396421249599"
-CURATED_BUCKET = "cloudstream-insights-396421249599"
+# Dein aktueller Bucketname
+RAW_BUCKET = "cloudstream-insights-erenaktuerk"
+CURATED_BUCKET = "cloudstream-insights-erenaktuerk"
 
+# Prefixes innerhalb des Buckets für Raw und Curated Zone
 RAW_PREFIX = "raw/"
 CURATED_PREFIX = "curated/"
 
-# Retry settings for S3 operations
+# Retry-Einstellungen für S3-Operationen
 S3_MAX_RETRIES = 3
-S3_RETRY_DELAY = 2  # seconds
+S3_RETRY_DELAY = 2  # Sekunden
 
 # --------------------------
 # S3 Client
@@ -40,8 +42,8 @@ s3_client = boto3.client("s3")
 # --------------------------
 def list_s3_files(bucket: str, prefix: str) -> list[str]:
     """
-    List all files under a specific S3 prefix.
-    Returns a list of keys.
+    Listet alle Objekte unter einem S3-Prefix auf.
+    Gibt eine Liste von Keys zurück.
     """
     logging.info(f"Listing files in s3://{bucket}/{prefix}")
     keys = []
@@ -54,13 +56,13 @@ def list_s3_files(bucket: str, prefix: str) -> list[str]:
 
 def read_json_from_s3(bucket: str, key: str) -> pd.DataFrame:
     """
-    Robust S3 JSON reader.
-    Supports:
+    Robuster JSON-Reader für S3.
+    Unterstützt:
       - JSON Lines
-      - Standard JSON arrays ([{}, {}, ...])
-      - Single JSON objects ({...})
-      - Lists of scalars ([1,2,3])
-    Includes retry logic for transient S3 errors.
+      - Standard JSON Arrays ([{}, {}, ...])
+      - Single JSON Objects ({...})
+      - Listen von Werten ([1,2,3])
+    Mit Retry-Logik bei transienten S3-Fehlern.
     """
     logging.info(f"Reading raw data from s3://{bucket}/{key}")
     
@@ -80,7 +82,7 @@ def read_json_from_s3(bucket: str, key: str) -> pd.DataFrame:
         logging.warning(f"{key} is empty. Skipping file.")
         return pd.DataFrame()
 
-    # Attempt JSON Lines first
+    # Versuch JSON Lines
     try:
         df = pd.read_json(BytesIO(content.encode()), lines=True)
     except ValueError:
@@ -88,7 +90,7 @@ def read_json_from_s3(bucket: str, key: str) -> pd.DataFrame:
         try:
             df = pd.read_json(BytesIO(content.encode()))
         except ValueError:
-            # Handle arrays of scalars or single objects
+            # Alternative: Arrays von Dictionaries oder Single Object
             try:
                 parsed = json.loads(content)
                 if isinstance(parsed, list):
@@ -110,8 +112,8 @@ def read_json_from_s3(bucket: str, key: str) -> pd.DataFrame:
 
 def write_parquet_to_s3(df: pd.DataFrame, bucket: str, key: str):
     """
-    Write a DataFrame to S3 as a Parquet file.
-    Skips writing if DataFrame is empty.
+    Schreibt ein DataFrame als Parquet-Datei nach S3.
+    Überspringt leere DataFrames.
     """
     if df.empty:
         logging.warning("DataFrame empty. Skipping Parquet write.")
@@ -127,23 +129,22 @@ def write_parquet_to_s3(df: pd.DataFrame, bucket: str, key: str):
 
 def perform_data_quality_checks(df: pd.DataFrame):
     """
-    Enhanced data quality checks for production readiness.
-    Checks include:
+    Erweiterte Data Quality Checks:
       - Empty DataFrame
-      - Missing values
-      - Schema enforcement (user_id=int, event=str)
+      - Missing Values
+      - Schema Enforcement (user_id=int, event=str)
     """
     logging.info("Performing data quality checks")
     
     if df.empty:
         logging.warning("DataFrame is empty")
 
-    # Missing values
+    # Fehlende Werte prüfen
     missing_values = df.isnull().sum().sum()
     if missing_values > 0:
         logging.warning(f"Data contains {missing_values} missing values")
 
-    # Schema checks and coercion
+    # Schema prüfen und nötigenfalls konvertieren
     if "user_id" in df.columns:
         if not pd.api.types.is_integer_dtype(df["user_id"]):
             logging.warning("Column 'user_id' is not integer type, coercing to int")
@@ -160,12 +161,12 @@ def perform_data_quality_checks(df: pd.DataFrame):
 # --------------------------
 def main():
     """
-    Main ETL pipeline workflow:
-      1. List all raw files in S3
-      2. Read JSON
-      3. Transform & normalize
-      4. Run data quality checks
-      5. Write partitioned Parquet to curated S3
+    Hauptpipeline:
+      1. Liste alle Raw-Dateien im S3-Bucket auf
+      2. Lese JSON
+      3. Transformation & Normalisierung
+      4. Data Quality Checks
+      5. Schreibe partitionierte Parquet-Dateien in die Curated-Zone
     """
     raw_files = list_s3_files(RAW_BUCKET, RAW_PREFIX)
     if not raw_files:
@@ -173,6 +174,7 @@ def main():
         return
 
     for raw_key in raw_files:
+        # Ordner-Keys überspringen
         if raw_key.endswith("/"):
             continue
         try:
